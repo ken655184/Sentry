@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# 環境
+.env
+.env.local
+
+# 資料
+data/*.db
+data/*.db-journal
+*.sqlite*
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# 日誌
+*.log
+logs/
+
+# Node / 前端
+node_modules/
+dist/
+.vite/
+
+# OS
+.DS_Store
+Thumbs.db
