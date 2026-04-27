@@ -6,11 +6,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from prometheus_client import make_asgi_app
 
 from app.api.v1 import auth, users, tests, reports, dashboard
+from app.api.v1 import tasks as tasks_router
 from app.auth.database import init_auth_db
 from app.auth.seed import seed_roles_and_admin
 from app.config import settings
 from app.core.exceptions import register_exception_handlers
 from app.core.logging import setup_logging
+from app.websocket.pubsub_bridge import bridge  # Part 2
 from app.websocket.routes import ws_router
 
 
@@ -20,8 +22,9 @@ async def lifespan(app: FastAPI):
     setup_logging()
     await init_auth_db()
     await seed_roles_and_admin()
+    await bridge.start()   # Part 2: 啟動 Redis Pub/Sub → WebSocket 橋接
     yield
-    # 關閉清理(如果需要)
+    await bridge.stop()    # Part 2: 優雅關閉橋接
 
 
 app = FastAPI(
@@ -55,6 +58,7 @@ app.include_router(users.router, prefix=f"{API_PREFIX}/users", tags=["users"])
 app.include_router(tests.router, prefix=f"{API_PREFIX}/tests", tags=["tests"])
 app.include_router(reports.router, prefix=f"{API_PREFIX}/reports", tags=["reports"])
 app.include_router(dashboard.router, prefix=f"{API_PREFIX}/dashboard", tags=["dashboard"])
+app.include_router(tasks_router.router, prefix=f"{API_PREFIX}/tasks", tags=["tasks"])  # Part 2
 
 # WebSocket
 app.include_router(ws_router, prefix="/ws")

@@ -20,6 +20,8 @@ dependencies = [
     # Celery
     "celery>=5.4.0",
     "redis>=5.1.0",
+    "redis[hiredis]>=5.1.0",   # hiredis parser:C 層加速,Pub/Sub 高頻場景必要
+    "kombu>=5.3.0",             # Celery 底層 transport,明列版本避免隱性升級
     # 監控
     "prometheus-client>=0.21.0",
     # 工具

@@ -37,7 +37,11 @@ class AuthService:
         tokens = TokenPair(
             access_token=create_access_token(
                 subject=user.username,
-                extra={"uid": user.id, "role": user.role.name},
+                extra={
+                    "uid": user.id,
+                    "role": user.role.name,
+                    "permissions": permissions,   # Part 2: WS auth 需要
+                },
             ),
             refresh_token=create_refresh_token(subject=user.username),
         )

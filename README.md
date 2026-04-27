@@ -1,4 +1,209 @@
-# Monitor System - 重構骨架 (Part 1/3)
+# Monitor System (Part 1 + 2 完整版)
+
+PHP 測試監控系統重構為 Python 版本 — **Part 1 + Part 2 合併後的完整骨架**。
+
+## 完成範圍
+
+### Part 1(基礎層)
+- ✅ 專案設定、核心工具(日誌、例外、回應格式)
+- ✅ 認證模組完整版:User / Role / Permission / AuditLog、JWT、bcrypt、`require_permission()`、5 個角色 seed
+
+### Part 2(非同步執行層)— 本次新增
+- ✅ **Celery Workers**(`app/workers/`)
+  - `celery_app.py`:App 設定、3 個 queue(default / heavy / audit)、生命週期 signal
+  - `progress.py`:ProgressReporter + Redis Pub/Sub 廣播
+  - `base.py`:AuditedTask — 自動帶稽核、ctx 注入、reporter
+  - `jobs/business_jobs.py`:業務模組 dispatch(run_job / batch)
+  - `jobs/resource_jobs.py`:檔案掃描 / metadata 讀取
+  - `jobs/audit_jobs.py`:非同步稽核寫入 + 批次 flush
+  - `jobs/system_jobs.py`:heartbeat / cleanup / ping
+  - `celery_beat.py`:heartbeat(30s)+ 稽核清理(每日凌晨 3 點)
+- ✅ **WebSocket**(`app/websocket/`)
+  - `manager.py`:ConnectionManager — 多連線 / 多 room / permission 過濾
+  - `pubsub_bridge.py`:Redis Pub/Sub → WS manager 橋接
+  - `routes.py`:WS endpoint + JWT 驗證 + client op 協議
+  - `metrics.py`:Prometheus 指標(連線數、task 計數)
+- ✅ **Repository 層存根**
+  - `app/repositories/db/business_registry.py`:業務 handler registry(留空介面)
+  - `app/repositories/filesystem/loader.py`:檔案路徑掃描 / metadata 讀取
+- ✅ **API**:`app/api/v1/tasks.py` — Task 觸發 / 狀態查詢 / 取消 / ping
+- ✅ **Docker Compose** — api / worker-default / worker-heavy / worker-audit / beat / flower(可選)
+- ✅ **Dockerfile**
+- ✅ Tests:progress、ws manager、fs loader、ws routes 驗證
+
+---
+
+## 快速啟動
+
+### 本機開發
+
+```bash
+# 1. 安裝依賴
+uv venv && source .venv/bin/activate
+uv pip install -e ".[dev]"
+
+# 2. 設定 env
+cp .env.example .env
+# 至少改 SECRET_KEY(≥32 字元)
+
+# 3. 啟動 Redis
+brew services start redis       # macOS
+# 或
+sudo systemctl start redis      # Linux
+
+# 4. 四個 terminal 分別啟動
+uvicorn app.main:app --reload --port 8000          # API
+celery -A app.workers worker -Q default --loglevel=info   # worker(default)
+celery -A app.workers worker -Q heavy,audit --loglevel=info  # worker(heavy+audit)
+celery -A app.workers beat --loglevel=info                # beat(排程)
+```
+
+驗證:
+- API docs: http://localhost:8000/docs
+- 健康: http://localhost:8000/health
+- Metrics: http://localhost:8000/metrics
+
+### Docker Compose
+
+```bash
+cp .env.example .env
+# 編輯 .env,設定 SECRET_KEY
+
+docker compose up -d
+
+# 包含 Flower 監控 UI (port 5555)
+docker compose --profile monitoring up -d
+```
+
+---
+
+## WebSocket 使用方式
+
+**URL**: `ws://localhost:8000/ws?token=<access_token>`
+
+```javascript
+const ws = new WebSocket(`ws://localhost:8000/ws?token=${accessToken}`);
+
+ws.onmessage = (e) => {
+  const msg = JSON.parse(e.data);
+
+  if (msg.type === "welcome") {
+    console.log("已連線", msg.username);
+  }
+
+  if (msg.type === "task_event") {
+    const { task_id, event, payload } = msg;
+    // event: started | progress | finished | failed | log
+    if (event === "progress") {
+      updateProgressBar(task_id, payload.percent);
+    }
+  }
+};
+
+// 訂閱某個 task 的進度
+ws.send(JSON.stringify({ op: "subscribe", room: `task:${taskId}` }));
+
+// 管理員訂閱全域 task 面板(需 audit:view 權限)
+ws.send(JSON.stringify({ op: "subscribe", room: "admin:tasks" }));
+
+// 定期心跳
+setInterval(() => ws.send(JSON.stringify({ op: "ping" })), 30000);
+```
+
+---
+
+## Celery Task 觸發
+
+```bash
+# 觸發業務 job
+POST /api/v1/tasks/dispatch
+{ "job_key": "example.echo", "params": {"msg": "hello"} }
+# → { "task_id": "abc-...", "ws_room": "task:abc-..." }
+
+# 查詢狀態
+GET /api/v1/tasks/<task_id>/status
+
+# 取消(只對還在 queue 的 task 有效)
+POST /api/v1/tasks/<task_id>/cancel
+
+# 確認 worker 活著
+GET /api/v1/tasks/ping
+```
+
+---
+
+## 接入你的業務模組
+
+在你們的業務 Python 模組啟動時呼叫:
+
+```python
+from app.repositories.db.business_registry import register
+
+def run_daily_report(*, params, reporter, ctx):
+    reporter.log("開始產報表...")
+    reporter.update(50, note="處理中")
+    # ... 你的邏輯 ...
+    return {"report_url": "..."}
+
+register("report.daily", run_daily_report)
+```
+
+之後前端就可以觸發 `POST /api/v1/tasks/dispatch` with `job_key: "report.daily"`。
+
+---
+
+## 目錄結構
+
+```
+monitor/
+├── app/
+│   ├── main.py                       # FastAPI 進入點(含 bridge lifespan)
+│   ├── config.py                     # 設定
+│   ├── core/                         # 日誌、例外、安全、回應
+│   ├── auth/                         # ★ 認證模組(完整)
+│   ├── api/v1/
+│   │   └── tasks.py                  # ★ Part 2: Task API
+│   ├── repositories/
+│   │   ├── db/business_registry.py   # ★ Part 2: 業務模組接口(留空)
+│   │   └── filesystem/loader.py      # ★ Part 2: 檔案掃描接口
+│   ├── workers/                      # ★ Part 2: Celery
+│   │   ├── celery_app.py
+│   │   ├── progress.py
+│   │   ├── base.py
+│   │   ├── celery_beat.py
+│   │   └── jobs/
+│   │       ├── business_jobs.py
+│   │       ├── resource_jobs.py
+│   │       ├── audit_jobs.py
+│   │       └── system_jobs.py
+│   └── websocket/                    # ★ Part 2: WebSocket
+│       ├── routes.py                 # ws_router (main.py import 的)
+│       ├── manager.py
+│       ├── pubsub_bridge.py
+│       └── metrics.py
+├── tests/
+│   ├── test_workers_progress.py
+│   ├── test_ws_manager.py
+│   ├── test_ws_routes.py
+│   └── test_fs_loader.py
+├── Dockerfile
+├── docker-compose.yml
+├── pyproject.toml
+└── .env.example
+```
+
+---
+
+## 預設 admin 帳號
+
+第一次啟動自動建立:帳號 `admin` / 密碼 `Admin1234`(會被強制要求改密碼)。
+
+## Part 3 預計補充
+
+- Vue 3 + Vite + Pinia + Element Plus 前端完整骨架
+- WebSocket composable + task 進度元件
+- Nginx 反向代理設定
+
 
 PHP 測試監控系統重構為 Python 版本的專案骨架。
 

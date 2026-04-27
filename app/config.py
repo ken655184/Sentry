@@ -36,6 +36,9 @@ class Settings(BaseSettings):
     CELERY_BROKER_URL: str = "redis://localhost:6379/1"
     CELERY_RESULT_BACKEND: str = "redis://localhost:6379/2"
 
+    # 稽核日誌保留天數(0 = 不清理)
+    AUDIT_LOG_RETENTION_DAYS: int = 180
+
     # CORS
     CORS_ORIGINS: str = "http://localhost:5173"
 
