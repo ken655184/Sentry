@@ -1,0 +1,48 @@
+monitor/
+├── app/
+│   ├── main.py                    # FastAPI 進入點
+│   ├── config.py                  # 環境設定
+│   │
+│   ├── api/                       # 路由層(薄)
+│   │   ├── v1/
+│   │   │   ├── tests.py           # 測試相關 endpoint
+│   │   │   ├── reports.py         # 報表
+│   │   │   └── dashboard.py       # 儀表板
+│   │   └── deps.py                # 相依注入(認證、DB session)
+│   │
+│   ├── schemas/                   # Pydantic 模型(請求/回應)
+│   │   ├── test.py
+│   │   └── report.py
+│   │
+│   ├── services/                  # 業務邏輯層(核心)
+│   │   ├── test_service.py
+│   │   └── report_service.py
+│   │
+│   ├── repositories/
+|   |── db/                    # 呼叫外部 Python DB 模組
+│   |    ├── base.py            # DBClient 介面(留空)
+│   |    ├── test_repo.py       # call 外部 python → 解析 json
+│   |    └── report_repo.py
+│   |
+|   |── filesystem/            # Server 上散落的資料
+|   |    ├── base.py            # FileSource 介面(留空)
+|   |    ├── log_source.py      # e.g. /var/log/xxx
+|   |    ├── config_source.py   # e.g. /etc/xxx/*.yaml
+|   |    └── artifact_source.py # 測試產物檔案
+│   │
+│   ├── workers/                   # Celery 任務
+│   │   ├── celery_app.py
+│   │   ├── test_tasks.py          # 跑測試
+│   │   └── schedule.py            # Beat 排程
+│   │
+│   └── core/                      # 共用工具
+│       ├── logging.py
+│       ├── security.py
+│       └── exceptions.py
+│
+├── tests/
+├── frontend/                      # 前端獨立專案
+├── docker-compose.yml
+├── Dockerfile
+├── pyproject.toml                 # 用 uv 或 poetry 管理
+└── README.md

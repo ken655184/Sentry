@@ -1,0 +1,10 @@
+技術棧總覽
+層級選用原因
+後端框架FastAPI非同步、自動 OpenAPI、Pydantic 
+驗證任務佇列Celery + Redis分離長任務、定時排程
+認證python-jose (JWT)無狀態、前後端分離友善
+即時推播FastAPI WebSocket + Redis Pub/Sub多 worker 廣播同步
+監控prometheus-client/metrics 端點給 Prometheus 抓
+前端Vue 3 + Vite + Pinia + Element Plus後台儀表板最快的組合
+套件管理uv (Python) / pnpm (前端)現代、速度快
+容器化Docker Compose(初期)可直接搬到 K8s

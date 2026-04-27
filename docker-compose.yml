@@ -1,0 +1,146 @@
+version: "3.9"
+
+# ── 共用設定 ──────────────────────────────────────────────────────────────
+x-app-base: &app-base
+  build:
+    context: .
+    dockerfile: Dockerfile
+    target: app
+  env_file: .env
+  volumes:
+    # SQLite 持久化;也可換成掛 named volume
+    - ./data:/app/data
+  depends_on:
+    redis:
+      condition: service_healthy
+  restart: unless-stopped
+
+x-app-env: &app-env
+  APP_ENV: ${APP_ENV:-development}
+  SECRET_KEY: ${SECRET_KEY:-change-me-in-production-use-32-chars-min}
+  AUTH_DB_URL: sqlite+aiosqlite:///./data/auth.db
+  # Redis db 分配:
+  #   0 → pub/sub (REDIS_URL)
+  #   1 → celery broker
+  #   2 → celery result backend
+  REDIS_URL: redis://redis:6379/0
+  CELERY_BROKER_URL: redis://redis:6379/1
+  CELERY_RESULT_BACKEND: redis://redis:6379/2
+  CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173}
+  FS_LOG_PATH: /var/log/monitor
+  FS_CONFIG_PATH: /etc/monitor
+  FS_ARTIFACT_PATH: /data/artifacts
+
+services:
+
+  # ── Redis ────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    command: redis-server --save 60 1 --loglevel warning
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  # ── FastAPI (API + WebSocket) ─────────────────────────────────────────
+  api:
+    <<: *app-base
+    environment:
+      <<: *app-env
+    ports:
+      - "8000:8000"
+    command: >
+      uvicorn app.main:app
+        --host 0.0.0.0
+        --port 8000
+        --workers 1
+        --log-level info
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import httpx; httpx.get('http://localhost:8000/health').raise_for_status()"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  # ── Celery worker:default queue ───────────────────────────────────────
+  worker-default:
+    <<: *app-base
+    environment:
+      <<: *app-env
+    command: >
+      celery -A app.workers.celery_app:celery_app worker
+        --queues default
+        --concurrency 4
+        --loglevel info
+        --hostname worker-default@%h
+    # worker 不需要對外開 port
+
+  # ── Celery worker:heavy queue ─────────────────────────────────────────
+  # 業務 job / 檔案掃描 跑在獨立 worker,避免塞爆 default queue
+  worker-heavy:
+    <<: *app-base
+    environment:
+      <<: *app-env
+    command: >
+      celery -A app.workers.celery_app:celery_app worker
+        --queues heavy
+        --concurrency 2
+        --loglevel info
+        --hostname worker-heavy@%h
+
+  # ── Celery worker:audit queue ─────────────────────────────────────────
+  # 稽核寫入專用 worker,低併發,保護 SQLite 不被大量寫入衝擊
+  worker-audit:
+    <<: *app-base
+    environment:
+      <<: *app-env
+    command: >
+      celery -A app.workers.celery_app:celery_app worker
+        --queues audit
+        --concurrency 1
+        --loglevel info
+        --hostname worker-audit@%h
+
+  # ── Celery beat (排程器) ──────────────────────────────────────────────
+  # 只能跑一個 instance,不可 scale out
+  beat:
+    <<: *app-base
+    environment:
+      <<: *app-env
+    command: >
+      celery -A app.workers.celery_app:celery_app beat
+        --loglevel info
+        --schedule /tmp/celerybeat-schedule
+    # beat 需要 worker 存在才有意義
+    depends_on:
+      - redis
+      - worker-default
+
+  # ── Flower (Celery 監控 UI) ───────────────────────────────────────────
+  flower:
+    <<: *app-base
+    environment:
+      <<: *app-env
+      FLOWER_BASIC_AUTH: ${FLOWER_USER:-admin}:${FLOWER_PASSWORD:-admin}
+    command: >
+      celery -A app.workers.celery_app:celery_app flower
+        --port=5555
+        --broker=redis://redis:6379/1
+        --broker_api=redis://redis:6379/1
+    ports:
+      - "5555:5555"
+    depends_on:
+      - redis
+    profiles:
+      # 預設不啟動 Flower,需要時 docker compose --profile monitoring up
+      - monitoring
+
+volumes:
+  redis_data:
